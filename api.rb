@@ -13,7 +13,7 @@ class Api < Goliath::API
           result = String(lock.lock_id)
         end
       rescue RedisLock::Error => e
-
+        result = String(e.class)
       end
     end
 
