@@ -1,11 +1,10 @@
 class RedisLock
 
-  class Error         < StandardError ; end
-  class ConsiderRetry < StandardError ; end
+  class Error < StandardError ; end
+  class Retry < StandardError ; end
 
   class TimeoutExceeded < RedisLock::Error ; end
   class RetriesExceeded < RedisLock::Error ; end
-
   class UnlockFailed    < RedisLock::Error ; end
 
   attr_accessor :redis, :logger
@@ -22,62 +21,63 @@ class RedisLock
     self.lock_id  = options[:lock_id]  || redis.incr('redis-lock:lock-id')
     self.lock_key = options[:lock_key] || [ 'redis-lock:lock', key ].join(':')
 
-    self.retries  = options[:retries]  || 99  # doesn't count the initial attempt
+    self.retries  = options[:retries]  || 2   # count the initial attempt
 
     self.timeout  = options[:timeout]  || 60  # seconds
     self.sleep    = options[:sleep]    || 0.1 # seconds
     self.stop_at  = now + timeout
 
     begin
-      lock!
-    ensure
-      unlock!
-    end
-  end
-
-  private
-
-  def lock!
-    begin
-      raise RedisLock::TimeoutExceeded if timeout_exceeded?
+      raise RedisLock::TimeoutExceeded if stop_at < now
       if lock_acquired?(generate_expiration_signature)
-        yield
+        begin
+          yield self
+        ensure
+          unlock!
+        end
       else
-        raise RedisLock::ConsiderRetry
+        raise RedisLock::Retry
       end
-    rescue RedisLock::ConsiderRetry
-      raise RedisLock::RetriesExceeded if self.retries <= 0
-      self.retries -= 1
-      self.sleep!
-      retry
+    rescue RedisLock::Retry
+      if self.retries <= 0
+        raise RedisLock::RetriesExceeded
+      else
+        self.queue_for_retry
+        retry
+      end
     end
   end
 
   def lock_acquired?(signature)
     if redis.setnx(lock_key, signature)
-      true # lock was open and we grabbed it
+      # debug("lock was open and we grabbed it")
+      true
+
     else
       # someone else has the lock, if it has expired,
       # race to grab it, letting redis pick the winner
       # in case there are concurrent getset requests.
       if expired?(redis.get(lock_key))
         if signature == redis.getset(lock_key, signature)
-          true # we won the lock
+          # debug("we won the lock")
+          true
         else
-          false # somone else won the lock
+          # debug("someone else won the lock")
+          false
         end
-      else # the open lock hasn't expired yet
+      else
+        # debug("the open lock hasn't expired")
         false
       end
     end
   end
 
   def unlock!
-    # make sure it's my lock
-  end
-
-  def timeout_exceeded?
-    stop_at < now
+    if my_signature?(redis.get(lock_key))
+      redis.del(lock_key)
+    else
+      raise RedisLock::UnlockFailed
+    end
   end
 
   def generate_expiration_signature
@@ -85,15 +85,21 @@ class RedisLock
   end
 
   def expired?(signature)
-    signature.split(':').shift.to_i < now
+    signature.nil? || signature.split(':')[0].to_i < now
+  end
+
+  def my_signature?(signature)
+    signature.split(':')[1] == String(lock_id)
   end
 
   def now
     Time.now.to_i
   end
 
-  def sleep!
-    # TODO consider binary or exponential backoff
+  def queue_for_retry
+    self.retries -= 1
+
+    # TODO consider binary or exponential backoff on self.sleep
     if defined?(EM::Synchrony)
       EM::Synchrony.sleep(self.sleep)
     else
@@ -101,14 +107,13 @@ class RedisLock
     end
   end
 
-  def debug!
-    logger.debug(RedisLock: {
-      lock_id:  lock_id,
-      lock_key: lock_key,
-      retries:  retries,
-      now:      now,
-      stop_at:  stop_at,
-    }) if logger && logger.debug?
+  def debug(message)
+    if logger && logger.debug?
+      logger.debug(RedisLock: {
+        lock_id: lock_id,
+        message: message,
+      })
+    end
   end
 
 end

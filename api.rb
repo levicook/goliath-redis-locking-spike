@@ -4,12 +4,13 @@ class Api < Goliath::API
 
   def response(env)
     status = 500
+    result = 'fail'
 
     connection_pool do |connection|
       begin
-        RedisLock.new(connection, 'hello', logger: logger) do
-          # i've got the lock
-
+        RedisLock.new(connection, 'hello', logger: logger) do |lock|
+          status = 200
+          result = String(lock.lock_id)
         end
       rescue RedisLock::Error => e
 
