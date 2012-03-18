@@ -28,12 +28,17 @@ class RedisLock
     self.stop_at  = now + timeout
 
     begin
+      debug("locking")
+
       raise RedisLock::TimeoutExceeded if stop_at < now
+
       if lock_acquired?(generate_expiration_signature)
         begin
+          debug("lock acquired")
           yield self
         ensure
           unlock!
+          debug("lock released")
         end
       else
         raise RedisLock::Retry
@@ -50,7 +55,7 @@ class RedisLock
 
   def lock_acquired?(signature)
     if redis.setnx(lock_key, signature)
-      # debug("lock was open and we grabbed it")
+      debug("lock was open and we grabbed it")
       true
 
     else
@@ -59,14 +64,14 @@ class RedisLock
       # in case there are concurrent getset requests.
       if expired?(redis.get(lock_key))
         if signature == redis.getset(lock_key, signature)
-          # debug("we won the lock")
+          debug("we won the lock")
           true
         else
-          # debug("someone else won the lock")
+          debug("someone else won the lock")
           false
         end
       else
-        # debug("the open lock hasn't expired")
+        debug("the open lock hasn't expired")
         false
       end
     end
