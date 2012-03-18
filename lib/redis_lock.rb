@@ -30,7 +30,6 @@ class RedisLock
 
     begin
       lock!
-      yield
     ensure
       unlock!
     end
@@ -40,38 +39,35 @@ class RedisLock
 
   def lock!
     begin
-      debug!
       raise RedisLock::TimeoutExceeded if timeout_exceeded?
+      if lock_acquired?(generate_expiration_signature)
+        yield
+      else
+        raise RedisLock::ConsiderRetry
+      end
+    rescue RedisLock::ConsiderRetry
+      raise RedisLock::RetriesExceeded if self.retries <= 0
+      self.retries -= 1
+      self.sleep!
+      retry
+    end
+  end
 
-      signature = generate_expiration_signature
-
-      # lock might be open, grab it if we can
-      return if redis.setnx(lock_key, signature)
-
-      # lock is being held
-      # if it's expired, use getset to acquire it
+  def lock_acquired?(signature)
+    if redis.setnx(lock_key, signature)
+      true # lock was open and we grabbed it
+    else
+      # someone else has the lock, if it has expired,
+      # race to grab it, letting redis pick the winner
+      # in case there are concurrent getset requests.
       if expired?(redis.get(lock_key))
         if signature == redis.getset(lock_key, signature)
-          return
+          true # we won the lock
         else
-          # somebody else won the lock
+          false # somone else won the lock
         end
-      else
-        # the open lock hasn't expired yet
-      end
-
-      raise RedisLock::ConsiderRetry
-
-    rescue RedisLock::ConsiderRetry
-
-      if self.retries <= 0
-        raise RedisLock::RetriesExceeded
-
-      else
-        self.retries -= 1
-        self.sleep!
-        retry
-
+      else # the open lock hasn't expired yet
+        false
       end
     end
   end
@@ -97,10 +93,11 @@ class RedisLock
   end
 
   def sleep!
+    # TODO consider binary or exponential backoff
     if defined?(EM::Synchrony)
-      EM::Synchrony.sleep(sleep)
+      EM::Synchrony.sleep(self.sleep)
     else
-      Kernel.sleep(sleep)
+      Kernel.sleep(self.sleep)
     end
   end
 
