@@ -8,6 +8,7 @@ class Api < Goliath::API
     connection_pool do |connection|
       begin
         RedisLock.new(connection, 'hello', logger: logger) do
+          # i've got the lock
 
         end
       rescue RedisLock::Error => e
