@@ -3,23 +3,21 @@ require './boot'
 class Api < Goliath::API
 
   def response(env)
-    result = 'a'
+    result, status = 'a', 500
 
     connection_pool do |connection|
       begin
         RedisLock.new(connection, 'hello', logger: logger) do |lock|
-          result = 'ab'
+          result, status = 'ab', 200
         end
       rescue RedisLock::TimeoutExceeded
-        result = 'abc'
+        result, status = 'abc', 200
       rescue RedisLock::RetriesExceeded
-        result = 'abcd'
-      rescue RedisLock::UnlockFailed
-        result = 'abcde'
+        result, status = 'abcd', 200
       end
     end
 
-    [ 200, { 'Content-Type' => 'text/plain' }, result ]
+    [ status , { 'Content-Type' => 'text/plain' } , result ]
   end
 
   private
