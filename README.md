@@ -2,8 +2,14 @@
 This proof of concept implements a [Redis][1] backed distributed cache.
 Waiting for the lock does not block [Goliath][2].
 
+Implements the locking semantics described at
+[http://redis.io/commands/setnx][3], without blocking the EventMachine
+reactor.
+
+
 [1]: http://redis.io
 [2]: http://postrank-labs.github.com/goliath
+[3]: http://redis.io/commands/setnx
 
 ### Results
 
