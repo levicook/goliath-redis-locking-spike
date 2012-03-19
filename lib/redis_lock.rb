@@ -41,7 +41,8 @@ class RedisLock
       if self.retries <= 0
         raise RedisLock::RetriesExceeded
       else
-        self.queue_for_retry
+        self.retries -= 1
+        self.snooze
         retry
       end
     end
@@ -98,10 +99,7 @@ class RedisLock
     Time.now.to_i
   end
 
-  def queue_for_retry
-    self.retries -= 1
-
-    # TODO consider binary or exponential backoff on self.sleep
+  def snooze
     if defined?(EM::Synchrony)
       EM::Synchrony.sleep(self.sleep)
     else
