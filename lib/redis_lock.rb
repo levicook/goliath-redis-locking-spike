@@ -27,23 +27,23 @@ class RedisLock
     self.stop_at  = now + timeout
 
     begin
-      begin
-        raise RedisLock::TimeoutExceeded if stop_at < now
-        if lock_acquired?(generate_expiration_signature)
+      raise RedisLock::TimeoutExceeded if stop_at < now
+      if lock_acquired?(generate_expiration_signature)
+        begin
           yield self
-        else
-          raise RedisLock::Retry
+        ensure
+          unlock!
         end
-      rescue RedisLock::Retry
-        if self.retries <= 0
-          raise RedisLock::RetriesExceeded
-        else
-          self.queue_for_retry
-          retry
-        end
+      else
+        raise RedisLock::Retry
       end
-    ensure
-      unlock!
+    rescue RedisLock::Retry
+      if self.retries <= 0
+        raise RedisLock::RetriesExceeded
+      else
+        self.queue_for_retry
+        retry
+      end
     end
   end
 
